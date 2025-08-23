@@ -21,7 +21,7 @@ const CategorySchema = new mongoose.Schema(
         parentCategory: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Category",
-            default: null, // null means it's a main category
+            default: null,
         },
         categoryImage: {
             type: String,

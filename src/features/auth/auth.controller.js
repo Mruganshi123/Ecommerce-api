@@ -3,9 +3,22 @@ const asyncHandler = require("express-async-handler");
 const ApiResponse = require("../../utils/ApiResponse");
 const ApiError = require("../../utils/ApiError");
 const Roles = require("../role/role.model");
+const wishlistService = require("../wishlist/wishlist.service");
+const cartService = require("../cart/cart.service");
 
 exports.login = asyncHandler(async (req, res) => {
     const data = await authService.login(req);
+
+    const guestWishlistItems = req.body.guestWishlist || [];
+    if (guestWishlistItems.length > 0) {
+        await wishlistService.mergeWishlists(data.user._id, guestWishlistItems);
+    }
+
+    const guestCartItems = req.body.guestCart || [];
+    if (guestCartItems.length > 0) {
+        req.user = { id: data.user._id }; // Temporarily set req.user for cartService
+        await cartService.mergeCarts(req);
+    }
 
     const response = new ApiResponse(200, "User logged in successfully", "success", { user: data.user, token: data.loginToken });
     res.cookie('refreshToken', data.refreshToken, {
