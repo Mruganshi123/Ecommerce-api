@@ -2,8 +2,11 @@ const ApiError = require("../../utils/ApiError");
 const Variant = require("./variant.model");
 const User = require('../user/user.model')
 const Role = require("../role/role.model");
+const { setCache, getCache, deleteCache } = require("../../utils/cache");
 
 exports.create = async (req) => {
+    deleteCache(`allVariants_product_${req.params.productID}`);
+    deleteCache(`variant_${req.params.productID}_${req.body.sku}`);
     const variantData = {
         product: req.params.productID,
         sku: req.body.sku,
@@ -25,12 +28,18 @@ exports.create = async (req) => {
 
 
 exports.getAll = async (req) => {
+    const productID = req.params.productID;
+    const cacheKey = `allVariants_product_${productID}`;
+    let variants = getCache(cacheKey);
+
+    if (!variants) {
+        variants = await Variant.find({ product: productID })
+            .populate({ path: 'product', select: 'vendor ' });
+        if (!variants || variants.length === 0) throw new ApiError("No variants found", 404);
+        setCache(cacheKey, variants);
+    }
+
     const user = req.user;
-    const variants = await Variant.find({ product: req.params.productID })
-        .populate({ path: 'product', select: 'vendor ' });
-
-    if (!variants || variants.length === 0) throw new ApiError("No variants found", 404);
-
     const userRole = await Role.findById(user.role);
 
     if (userRole.role !== 'admin') {
@@ -47,6 +56,8 @@ exports.getAll = async (req) => {
 
 
 exports.update = async (req) => {
+    deleteCache(`allVariants_product_${req.params.productID}`);
+    deleteCache(`variant_${req.params.variantID}`);
     const updateData = { ...req.body };
 
     if (req.files) {
@@ -67,6 +78,8 @@ exports.update = async (req) => {
 }
 
 exports.delete = async (req) => {
+    deleteCache(`allVariants_product_${req.params.productID}`);
+    deleteCache(`variant_${req.params.variantID}`);
     const variant = await Variant.findByIdAndDelete(req.params.variantID);
     if (!variant) {
         throw new ApiError("Variant not found", 404);
@@ -75,9 +88,16 @@ exports.delete = async (req) => {
 }
 
 exports.getById = async (req) => {
-    const variant = await Variant.findById(req.params.variantID).populate("product");
+    const variantID = req.params.variantID;
+    const cacheKey = `variant_${variantID}`;
+    let variant = getCache(cacheKey);
+
     if (!variant) {
-        throw new ApiError("Variant not found", 404);
+        variant = await Variant.findById(variantID).populate("product");
+        if (!variant) {
+            throw new ApiError("Variant not found", 404);
+        }
+        setCache(cacheKey, variant);
     }
     return variant;
 }

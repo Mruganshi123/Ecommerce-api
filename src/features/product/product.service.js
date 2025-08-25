@@ -7,9 +7,12 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const axios = require("axios");
+const { setCache, getCache, deleteCache } = require("../../utils/cache");
 
 exports.create = async (req) => {
 
+    deleteCache("allProducts_admin");
+    deleteCache(`allProducts_vendor_${req.user.id}`);
     const productData = {
         name,
         slug,
@@ -53,33 +56,53 @@ exports.getAll = async (req) => {
 
     const userRole = await Role.findById(req.user.role).select('role')
     if (userRole.role === 'vendor') {
-        return await Product.find({ vendor: req.user.id }).populate([{ path: "category" }, { path: 'vendor' }]);;
+        const cacheKey = `allProducts_vendor_${req.user.id}`;
+        let products = getCache(cacheKey);
+        if (!products) {
+            products = await Product.find({ vendor: req.user.id }).populate([{ path: "category" }, { path: 'vendor' }]);
+            setCache(cacheKey, products);
+        }
+        return products;
     }
     else {
-        return await Product.find({}).populate([{ path: "category" }, { path: 'vendor' }]);;
+        const cacheKey = "allProducts_admin";
+        let products = getCache(cacheKey);
+        if (!products) {
+            products = await Product.find({}).populate([{ path: "category" }, { path: 'vendor' }]);
+            setCache(cacheKey, products);
+        }
+        return products;
     }
 }
 
 
 exports.getById = async (req) => {
-    const userRole = await Role.findById(req.user.role).select('role')
-    if (userRole.role === 'vendor') {
-        const product = await Product.find({ vendor: req.user.id }, { _id: req.params.productID }).populate([{ path: "category" }, { path: 'vendor' }, { path: 'variants' }]);
-        if (!product) {
-            throw new ApiError(404, "Product not found");
+    const productID = req.params.productID;
+    const cacheKey = `product_${productID}`;
+    let product = getCache(cacheKey);
+
+    if (!product) {
+        const userRole = await Role.findById(req.user.role).select('role')
+        if (userRole.role === 'vendor') {
+            product = await Product.find({ vendor: req.user.id }, { _id: productID }).populate([{ path: "category" }, { path: 'vendor' }, { path: 'variants' }]);
+            if (!product) {
+                throw new ApiError(404, "Product not found");
+            }
+        } else {
+            product = await Product.findById(productID).populate([{ path: "category" }, { path: 'vendor' }, { path: 'variants' }]);
+            if (!product) {
+                throw new ApiError(404, "Product not found");
+            }
         }
-        return product;
+        setCache(cacheKey, product);
     }
-    else {
-        const product = await Product.findById(req.params.productID).populate([{ path: "category" }, { path: 'vendor' }, { path: 'variants' }]);
-        if (!product) {
-            throw new ApiError(404, "Product not found");
-        }
-        return product;
-    }
+    return product;
 }
 
 exports.update = async (req) => {
+    deleteCache("allProducts_admin");
+    deleteCache(`allProducts_vendor_${req.user.id}`);
+    deleteCache(`product_${req.params.productID}`);
     const product = await Product.findById(req.params.productID);
 
     if (!product) {
@@ -109,6 +132,9 @@ exports.update = async (req) => {
 };
 
 exports.delete = async (req) => {
+    deleteCache("allProducts_admin");
+    deleteCache(`allProducts_vendor_${req.user.id}`);
+    deleteCache(`product_${req.params.productID}`);
     const product = await Product.findById(req.params.productID);
 
     if (!product) {
@@ -123,6 +149,9 @@ exports.delete = async (req) => {
 
 
 exports.changeStatus = async (req) => {
+    deleteCache("allProducts_admin");
+    deleteCache(`allProducts_vendor_${req.user.id}`);
+    deleteCache(`product_${req.params.productID}`);
     const { status } = req.body;
     const { productID } = req.params;
 
@@ -147,6 +176,9 @@ exports.changeStatus = async (req) => {
 };
 
 exports.updateStock = async (req) => {
+    deleteCache("allProducts_admin");
+    deleteCache(`allProducts_vendor_${req.user.id}`);
+    deleteCache(`product_${req.params.productID}`);
     const { productID } = req.params;
     const { stock } = req.body;
     const product = await Product.findById(productID);
@@ -159,13 +191,15 @@ exports.updateStock = async (req) => {
     console.log(product.vendor);
 
     await product.updateOne({ $set: { stock } });
-    return await Product.findById(productID); // return updated doc
+    return await Product.findById(productID);
 }
 
 exports.bulkUpload = async (req) => {
+    deleteCache("allProducts_admin");
+    deleteCache(`allProducts_vendor_${req.user.id}`);
     if (!req.file) throw new ApiError(400, "No file uploaded");
 
-    const tempPath = req.file.path; // Multer's disk file path
+    const tempPath = req.file.path;
     const extension = path.extname(tempPath).toLowerCase();
 
     let productData = [];

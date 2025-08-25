@@ -1,8 +1,11 @@
 const Vendor = require("./vendor.model");
 const ApiError = require("../../utils/ApiError");
 const emailQueueModule = require("../../queue/email.queue");
+const { setCache, getCache, deleteCache } = require("../../utils/cache");
 
 exports.setUpProfile = async (req) => {
+    deleteCache("allVendors");
+    deleteCache(`vendor_${req.user.id}`);
 
     const vendorData = {
         user: req.user.id,
@@ -69,20 +72,34 @@ exports.getPendingVendors = async () => {
 };
 
 exports.getVendors = async () => {
-    const vendors = await Vendor.find({});
+    const cacheKey = "allVendors";
+    let vendors = getCache(cacheKey);
+
+    if (!vendors) {
+        vendors = await Vendor.find({});
+        setCache(cacheKey, vendors);
+    }
     return vendors;
 };
 
 exports.getVendorById = async (req) => {
     const { vendorID } = req.params;
-    const vendor = await Vendor.findById(vendorID);
+    const cacheKey = `vendor_${vendorID}`;
+    let vendor = getCache(cacheKey);
+
     if (!vendor) {
-        throw new ApiError("Vendor not found", 404);
+        vendor = await Vendor.findById(vendorID);
+        if (!vendor) {
+            throw new ApiError("Vendor not found", 404);
+        }
+        setCache(cacheKey, vendor);
     }
     return vendor;
 };
 
 exports.deleteVendor = async (req) => {
+    deleteCache("allVendors");
+    deleteCache(`vendor_${req.params.vendorID}`);
     const { vendorID } = req.params;
     const deleted = await Vendor.findByIdAndDelete(vendorID);
     if (!deleted) {

@@ -6,9 +6,12 @@ const Variant = require("../variants/variant.model");
 const ApiError = require("../../utils/ApiError");
 const emailQueueModule = require("../queue/email.queue");
 const axios = require('axios');
+const { setCache, getCache, deleteCache } = require("../../utils/cache");
 
 
 exports.placeOrder = async (req, stripeSessionId = null) => {
+    deleteCache("allOrders");
+    deleteCache(`userOrders_${req.user.id}`);
     const userId = req.user.id;
     const { shippingAddress, paymentMethod } = req.body;
 
@@ -90,6 +93,8 @@ exports.placeOrder = async (req, stripeSessionId = null) => {
 };
 
 exports.updateOrderStatusAndPayment = async (stripeSessionId, paymentStatus, orderStatus, invoiceId = null) => {
+    deleteCache("allOrders");
+    // More specific cache invalidation for user orders might be needed here if user orders are cached individually
     const updateFields = { paymentStatus: paymentStatus, orderStatus: orderStatus };
     if (invoiceId) {
         updateFields.invoiceId = invoiceId;
@@ -109,14 +114,27 @@ exports.updateOrderStatusAndPayment = async (stripeSessionId, paymentStatus, ord
 
 exports.getUserOrders = async (req) => {
     const userId = req.user.id;
-    return await Order.find({ user: userId }).populate("items.product items.variant items.vendor");
+    const cacheKey = `userOrders_${userId}`;
+    let orders = getCache(cacheKey);
+
+    if (!orders) {
+        orders = await Order.find({ user: userId }).populate("items.product items.variant items.vendor");
+        setCache(cacheKey, orders);
+    }
+    return orders;
 };
 
 exports.getOrderDetails = async (req) => {
     const { id } = req.params;
-    const order = await Order.findById(id).populate("items.product items.variant items.vendor");
+    const cacheKey = `orderDetails_${id}`;
+    let order = getCache(cacheKey);
+
     if (!order) {
-        throw new ApiError(404, "Order not found");
+        order = await Order.findById(id).populate("items.product items.variant items.vendor");
+        if (!order) {
+            throw new ApiError(404, "Order not found");
+        }
+        setCache(cacheKey, order);
     }
     if (order.user.toString() !== req.user.id && req.user.role !== 'admin' && req.user.role !== 'vendor') { // Assuming req.user.role is available
         throw new ApiError(403, "Unauthorized access to order");
@@ -125,6 +143,9 @@ exports.getOrderDetails = async (req) => {
 };
 
 exports.cancelOrder = async (req) => {
+    deleteCache("allOrders");
+    deleteCache(`userOrders_${req.user.id}`);
+    deleteCache(`orderDetails_${req.params.id}`);
     const { id } = req.params;
     const userId = req.user.id;
 
@@ -164,6 +185,8 @@ exports.getVendorOrders = async (req) => {
 };
 
 exports.updateVendorOrderItemStatus = async (req) => {
+    deleteCache("allOrders");
+    // Invalidate user specific caches if applicable
     const { id, itemId } = req.params;
     const { status } = req.body;
     const vendorId = req.user.id;
@@ -188,33 +211,46 @@ exports.updateVendorOrderItemStatus = async (req) => {
 };
 
 exports.getAllOrders = async (req) => {
-    return await Order.find({}).populate("items.product items.variant items.vendor");
+    const cacheKey = "allOrders";
+    let orders = getCache(cacheKey);
+
+    if (!orders) {
+        orders = await Order.find({}).populate("items.product items.variant items.vendor");
+        setCache(cacheKey, orders);
+    }
+    return orders;
 };
 
 exports.downloadInvoice = async (orderId, userId) => {
-    const order = await Order.findById(orderId).populate("items.product items.variant items.vendor");
+    const cacheKey = `invoice_${orderId}`;
+    let invoiceData = getCache(cacheKey);
 
-    if (!order) {
-        throw new ApiError(404, "Order not found");
-    }
+    if (!invoiceData) {
+        const order = await Order.findById(orderId).populate("items.product items.variant items.vendor");
 
-    const isOrderOwner = userId && order.user.toString() === userId;
-    const isVendorOfOrderItem = userId && order.items.some(item => item.vendor.toString() === userId);
+        if (!order) {
+            throw new ApiError(404, "Order not found");
+        }
 
-    if (userId && !isOrderOwner && !isVendorOfOrderItem) {
-        throw new ApiError(403, "Unauthorized access to order invoice");
-    }
+        const isOrderOwner = userId && order.user.toString() === userId;
+        const isVendorOfOrderItem = userId && order.items.some(item => item.vendor.toString() === userId);
 
-    if (!order.invoiceId) {
-        throw new ApiError(404, "Invoice not available for this order.");
-    }
+        if (userId && !isOrderOwner && !isVendorOfOrderItem) {
+            throw new ApiError(403, "Unauthorized access to order invoice");
+        }
 
-    const invoice = await stripe.invoices.retrieve(order.invoiceId);
+        if (!order.invoiceId) {
+            throw new ApiError(404, "Invoice not available for this order.");
+        }
 
-    if (!invoice || !invoice.invoice_pdf) {
-        throw new ApiError(404, "Stripe invoice PDF not found.");
-    }
+        const invoice = await stripe.invoices.retrieve(order.invoiceId);
 
-    const response = await axios.get(invoice.invoice_pdf, { responseType: 'arraybuffer' });
-    return response.data;
-};
+        if (!invoice || !invoice.invoice_pdf) {
+            throw new ApiError(404, "Stripe invoice PDF not found.");
+        }
+
+        const response = await axios.get(invoice.invoice_pdf, { responseType: 'arraybuffer' });
+        setCache(cacheKey, response.data, 3600000);
+        return response.data;
+    };
+}

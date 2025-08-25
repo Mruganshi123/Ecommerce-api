@@ -1,5 +1,6 @@
 const ApiError = require("../../utils/ApiError");
 const Category = require("./category.model");
+const { setCache, getCache, deleteCache } = require("../../utils/cache");
 
 exports.create = async (req) => {
 
@@ -18,20 +19,35 @@ exports.create = async (req) => {
 }
 
 exports.getAll = async () => {
-    const categories = await Category.find({}).populate('parentCategory');
+    const cacheKey = "allCategories";
+    let categories = getCache(cacheKey);
+
+    if (!categories) {
+        categories = await Category.find({}).populate('parentCategory');
+        setCache(cacheKey, categories);
+    }
     return categories;
 }
 
 
 exports.getById = async (req) => {
-    const categories = await Category.findById({ _id: req.params.categoryID }).populate('parentCategory');
-    if (!categories) {
-        throw new ApiError("category not found", 404);
+    const categoryID = req.params.categoryID;
+    const cacheKey = `category_${categoryID}`;
+    let category = getCache(cacheKey);
+
+    if (!category) {
+        category = await Category.findById({ _id: categoryID }).populate('parentCategory');
+        if (!category) {
+            throw new ApiError("category not found", 404);
+        }
+        setCache(cacheKey, category);
     }
-    return categories;
+    return category;
 }
 
 exports.update = async (req) => {
+    deleteCache("allCategories");
+    deleteCache(`category_${req.params.categoryID}`);
     const updateData = { ...req.body };
 
     if (req.files?.categoryImage?.[0]?.path) {
@@ -52,6 +68,8 @@ exports.update = async (req) => {
 
 exports.delete = async (req) => {
 
+    deleteCache("allCategories");
+    deleteCache(`category_${req.params.categoryID}`);
     const category = await Category.findByIdAndDelete(req.params.categoryID);
     if (!category) {
         throw new ApiError("category not found", 404);
